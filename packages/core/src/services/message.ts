@@ -329,6 +329,7 @@ import { maybeHandleAnalysisActivation } from "./analysis-mode-handler";
 import { ChannelTopicsService } from "./channel-topics";
 import { runPostTurnEvaluators } from "./evaluator";
 import { runBotNoiseTriage } from "./message/bot-noise-triage";
+import { senderInActiveConversation } from "./message/reply-gate-continuity";
 import {
 	type DirectCurrentRequestCandidateInference,
 	findCodingDelegationActionName,
@@ -11901,11 +11902,20 @@ export class DefaultMessageService implements IMessageService {
 		if (personalityStore && message.entityId !== runtime.agentId) {
 			const userSlot = personalityStore.getSlot(message.entityId);
 			const globalSlot = personalityStore.getSlot("global");
+			// Continuity probe is lazy: only an on_mention gate that is about to
+			// drop an unaddressed turn pays the recent-history lookup — addressed
+			// turns and every other mode stay zero-cost.
+			const recentlyEngagedWithSender =
+				resolveEffectiveReplyGate(userSlot, globalSlot).mode === "on_mention" &&
+				!explicitlyAddressesAgent
+					? await senderInActiveConversation(runtime, message)
+					: false;
 			const gateDecision = decideReplyGate({
 				userSlot,
 				globalSlot,
 				messageText: message.content?.text,
 				explicitlyAddressesAgent,
+				recentlyEngagedWithSender,
 			});
 			if (gateDecision.allow === false) {
 				runtime.logger.debug(
